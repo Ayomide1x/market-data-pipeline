@@ -1,0 +1,99 @@
+name: market-data-pipeline
+
+services:
+  kafka:
+    image: apache/kafka:4.3.1
+    hostname: kafka
+    environment:
+      CLUSTER_ID: "0vdKmALERBCX9QAvTQWdcg"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # Bind addresses (0.0.0.0: accept connections on every interface inside the container).
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      # Addresses handed back to clients after connecting — what they should reconnect to.
+      # INTERNAL: other containers on the compose network. EXTERNAL: host-run processes (CLI tools, ingester via `npm run dev`).
+      # 127.0.0.1, not localhost: Docker publishes the port on the IPv4 loopback only, but
+      # `localhost` resolves to both ::1 and 127.0.0.1 — a client that tries IPv6 first gets
+      # connection-refused before ever trying IPv4.
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+      # Single broker: internal topics must not demand replicas that don't exist.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        BOOTSTRAP=kafka:9092
+        TOPIC=ticks
+        EXPECTED_PARTITIONS=6
+        TOPIC_CONFIG="segment.ms=3600000,segment.bytes=52428800,retention.ms=21600000,retention.bytes=209715200,cleanup.policy=delete"
+
+        echo "===> Creating $$TOPIC if it doesn't exist ..."
+        /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+          --bootstrap-server "$$BOOTSTRAP" \
+          --topic "$$TOPIC" \
+          --partitions "$$EXPECTED_PARTITIONS" \
+          --replication-factor 1 \
+          --config segment.ms=3600000 \
+          --config segment.bytes=52428800 \
+          --config retention.ms=21600000 \
+          --config retention.bytes=209715200 \
+          --config cleanup.policy=delete
+
+        echo "===> Checking partition count is still $$EXPECTED_PARTITIONS (it can never change after creation) ..."
+        ACTUAL_PARTITIONS=$$(/opt/kafka/bin/kafka-topics.sh --describe --bootstrap-server "$$BOOTSTRAP" --topic "$$TOPIC" | head -1 | sed -n 's/.*PartitionCount: \([0-9]*\).*/\1/p')
+        if [ "$$ACTUAL_PARTITIONS" != "$$EXPECTED_PARTITIONS" ]; then
+          echo "FATAL: topic $$TOPIC has $$ACTUAL_PARTITIONS partitions, expected $$EXPECTED_PARTITIONS." >&2
+          echo "Partition count cannot change after creation (invariant #1) - this must be fixed deliberately, not by kafka-init." >&2
+          exit 1
+        fi
+
+        echo "===> Applying topic config (safe no-op if unchanged) ..."
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server "$$BOOTSTRAP" \
+          --alter --entity-type topics --entity-name "$$TOPIC" \
+          --add-config "$$TOPIC_CONFIG"
+
+        echo "===> Final state:"
+        /opt/kafka/bin/kafka-topics.sh --describe --bootstrap-server "$$BOOTSTRAP" --topic "$$TOPIC"
+    restart: "no"
+
+  redis:
+    image: redis:8.2.9-alpine
+    hostname: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  kafka-data:
+  redis-data:

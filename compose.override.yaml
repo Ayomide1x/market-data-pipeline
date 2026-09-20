@@ -1,0 +1,13 @@
+# Loaded automatically by `docker compose up` alongside compose.yaml.
+# Dev-only host port publishing, bound to loopback so nothing but this machine can reach them.
+# Not part of compose.yaml itself: an override file can add ports but cannot remove ones the
+# base file publishes, so the base file publishes none and prod (compose.yaml + compose.prod.yaml)
+# never sees a port mapping at all.
+services:
+  kafka:
+    ports:
+      - "127.0.0.1:29092:29092"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
