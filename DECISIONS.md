@@ -109,9 +109,91 @@ Over: an unpinned or minor-pinned tag (`redis:8.2-alpine`, `redis:alpine`); an a
 Because: `redis:8.2-alpine` and `redis:8.2.9-alpine` currently resolve to the identical image (same digest, confirmed by pulling both), but only the patch-pinned tag stays reproducible if `8.2.10` etc. is released later — consistent with the same pin-everything reasoning applied to Kafka. A named volume is needed for the same reason as Kafka's: an anonymous volume can be orphaned by container recreation, silently losing the AOF file and defeating the whole point of `--appendonly yes`.
 Breaks if: nothing specific; re-pin when intentionally upgrading Redis. Verified: `docker run --rm redis:8.2.9-alpine redis-server --version` reports `v=8.2.9`; `redis-cli CONFIG GET appendonly` returns `yes` and `/data/appendonlydir` exists after `docker compose up`.
 
+## Ingester Node.js version: `engines` range `>=24 <25`, exact `24.21.0` pinned via `.nvmrc`
+
+Chose: `package.json` declares `"engines": { "node": ">=24 <25" }` (accepts any Node 24.x, rejects 23 or 26); `.nvmrc` pins the exact patch, `24.21.0`, for local version managers (`fnm`/`nvm`) to install and switch to.
+Over: pinning the exact `24.21.0` in `engines` too; pinning to `26.8.2`, the version actually installed on this machine before this decision (`node --version` → `v26.8.2`, via Homebrew).
+Because: CLAUDE.md specifies "current Node.js LTS" for the ingester — as of today Node 24 is Active LTS and Node 26 is still Current (becomes LTS 2026-10-28), so 24.x is the correct line. `engines` is an npm-enforced compatibility check across whoever/whatever runs this package (CI later, a teammate, a future you) — an exact-version `engines` pin is needlessly strict for that purpose and would reject a routine 24.21.1 patch release for no reason; the range expresses "must be on the LTS-24 line" without pinning a moment in time. `.nvmrc`, by contrast, exists specifically to pin an exact, reproducible version for local dev tooling to install — that's where the exact patch belongs.
+Breaks if: development on this machine runs on the globally-installed 26.8.2 day to day while these files declare 24.x — installing 24.21.0 via `fnm` and confirming `node --version` before `npm install` avoids `@confluentinc/kafka-javascript`'s native module build happening against the wrong Node ABI. This isn't hypothetical: see the `engine-strict` decision below.
+
+## `ingester/.npmrc`: `engine-strict=true`
+
+Chose: `engine-strict=true` in `ingester/.npmrc`, making the `engines` range in `package.json` a hard install-time gate instead of an advisory.
+Over: leaving `engines` as documentation only (npm's default behavior — it warns, but installs anyway).
+Because: this already happened once. Writing this code, the shell running `npm install` didn't have `fnm`'s environment sourced (a fresh non-interactive shell that predated adding `fnm` to `.zshrc`), so `which node` silently resolved to Homebrew's `v26.8.2` instead of the pinned `24.21.0` — `npm install` proceeded without complaint and compiled `@confluentinc/kafka-javascript`'s native addon against the wrong Node ABI. It was caught only by checking `node --version` immediately before the install and noticing the mismatch, then killing the running install and rebuilding from a clean `node_modules`. `engine-strict` turns that class of mistake into a loud `EBADENGINE` failure at `npm install` time instead of a silently-wrong native build discovered later (or not discovered at all, if it happened to work) — confirmed by re-running `npm install` under Homebrew's `v26.8.2`: it now refuses immediately (`Required: {"node":">=24 <25"} / Actual: {"node":"v26.8.2"}`) instead of installing.
+Breaks if: someone needs to install with a Node version outside the declared range for a one-off reason — `engine-strict` has no per-command override short of editing `.npmrc` or passing `--engine-strict=false`, which is the point: it should be inconvenient to bypass, not silently skipped.
+
+## Ingester language: TypeScript, not plain JavaScript — plus a hand-written runtime guard for WebSocket data
+
+Chose: TypeScript, run directly in dev via `tsx` (no separate compile step during development). **Correction to an earlier version of this entry:** TypeScript only checks code that flows through statically-typed values — it catches us mismapping our own fields when *constructing* the outgoing Kafka message (e.g. writing `exchangeTs` as a string, or transposing two fields), because that code is ours and fully typed. It does **not** validate the data actually arriving over the Coinbase WebSocket: `JSON.parse()` of a network message returns `any`/`unknown`, and nothing stops us from asserting a type onto it that the real payload doesn't match — Coinbase sending a malformed or unexpected message wouldn't be caught by the type system at all, it would just be silently mis-cast.
+Over: plain JavaScript (no build-time checking on our own code either); reaching for a validation library (`zod`, `ajv`, etc.) for the runtime side.
+Because: TypeScript still earns its place for the code we write (the message-construction path, the config loader) — schema v1 is a contract other services depend on, and a typo'd key or wrong-typed field in *our own* code is worth catching at edit time. But the WebSocket boundary needs an explicit, hand-written runtime check, not type annotations: a small type guard function (`isMatchMessage(msg: unknown): msg is CoinbaseMatchMessage`) that checks `typeof price === 'string'`, `typeof size === 'string'`, `typeof trade_id === 'number'`, `!Number.isNaN(Date.parse(time))`, and `configuredSymbols.includes(product_id)`. Anything that fails is logged and dropped, not produced to Kafka. A validation library is unnecessary weight for one message shape with five fields to check — hand-written conditionals are shorter than the equivalent schema definition and just as clear.
+Breaks if: the guard's checks and the `CoinbaseMatchMessage` type ever drift apart (someone changes the type without updating the guard, or vice versa) — the guard is the actual boundary enforcement, the type is documentation for code past that boundary. `tsx` remains a dev-time convenience; whether the eventual Dockerfile runs compiled `dist/*.js` or `tsx` directly against `src/` is a Stage-9-adjacent decision, not one to make now.
+
+## Ingester dev run mode: host via `npm`, not containerized yet
+
+Chose: run the ingester directly on the host during Stages 1–2 (`npm run dev`, connecting to Kafka at `127.0.0.1:29092`, the `EXTERNAL` listener), no Dockerfile yet.
+Over: containerizing the ingester now and running it against `kafka:9092` (the `INTERNAL` listener) from the start, for parity with how it'll run in prod.
+Because: `@confluentinc/kafka-javascript` is a native module — containerizing now means every code change costs an image rebuild (or a bind-mount + reinstall-in-container dance) for zero benefit while the code is still this small and single-instance. The `EXTERNAL` listener exists specifically for this case (see the listener topology decision above). Containerizing is cheap to add later and doesn't need deciding now — consistent with implementing one component at a time rather than scaffolding ahead of the current stage.
+Breaks if: this is revisited once the ingester needs to run unattended (Stage 9/10) or needs to join `compose.yaml` so `docker compose up` brings up the whole pipeline in one command — at that point it gets a Dockerfile and switches to `kafka:9092`.
+
+## Stage 1 tick message: full schema v1 now, `trade_id` mapped to `exchangeSeq`
+
+Chose: produce the full schema v1 shape from Stage 1 (`{ v: 1, symbol, price, size, exchangeTs, ingestTs, exchangeSeq }`), not a stripped-down interim shape.
+Over: a minimal ad hoc shape for Stage 1 (e.g. just `{ symbol, price }`) and expanding to full schema v1 in Stage 2.
+Because: schema v1's fields are already fully specified in this file's data contracts, and the `exchangeSeq` field's source (`trade_id`, not `sequence`) is already decided. There's nothing left to design at Stage 2 that would change the shape — Stage 2 adds *behavior* (idempotent producer config, reconnect, gap logging using the `exchangeSeq` field this stage already writes), not new fields. Writing the real shape now avoids a schema migration for a field set that's already settled.
+Field mapping from Coinbase's `match` message (verified shape: `{type, trade_id, maker_order_id, taker_order_id, side, size, price, product_id, sequence, time}`, `trade_id`/`sequence` as JSON numbers, `price`/`size` as strings, `time` as an ISO 8601 string):
+- `symbol` ← `product_id` (already in our `SYMBOLS` format, e.g. `"BTC-USD"` — no translation needed)
+- `price` ← `price` (already a string — pass through, no parsing)
+- `size` ← `size` (already a string — pass through)
+- `exchangeTs` ← `Date.parse(time)` (ISO 8601 → epoch ms; Coinbase's microsecond precision is truncated to ms, which is what our field is)
+- `ingestTs` ← `Date.now()` at the point the ingester constructs the record
+- `exchangeSeq` ← `trade_id` (per the earlier exchange decision — not `sequence`)
+Breaks if: Coinbase ever changes `matches` channel field names or types without a version bump on their side (nothing to do differently now — this is the same risk any integration with an external feed carries, not something Stage 1 needs to guard against).
+
+## WebSocket client: `ws`, not Node's built-in global `WebSocket`
+
+Chose: the `ws` npm package.
+Over: Node's built-in global `WebSocket` (available since Node 21, backed by `undici`).
+Because: the built-in `WebSocket` deliberately implements the WHATWG browser spec, which never exposes control frames to application code — no `.ping()` method, no `'ping'`/`'pong'` events; the browser (and Node's spec-compliant implementation of it) handles those transparently below the API surface script can reach. `ws` is a Node-native implementation that exposes ping/pong directly (`socket.ping()`, `socket.on('pong', ...)`). Stage 2's stale-connection detection is likely to want exactly that: sending an application-level ping on an interval and treating a missing pong as the "no message for N seconds" signal, rather than only inferring staleness from the absence of data messages (which `matches` won't send at all if a symbol is simply quiet — not the same thing as a dead connection).
+Breaks if: nothing yet — this is a Stage 1 dependency choice made now because it's the kind of thing that's annoying to swap later, not because Stage 1 itself uses ping/pong (it doesn't; that's Stage 2).
+
+## Stage 2 note (not solved now): `ws` ping/pong and Coinbase's `heartbeat` channel are complementary, not redundant
+
+Chose: not deciding the stale-connection design yet — recording that Stage 2 likely wants both mechanisms, for different failure modes.
+Because: `ws`'s ping/pong proves the TCP/TLS socket itself is alive — the transport is up and Coinbase's server is responding to frames at all. It says nothing about whether the *feed* is alive per product: a socket can be perfectly healthy while a specific product's `matches` channel goes quiet because Coinbase stopped sending for that product_id (the exact "bad `product_id`" silent-failure shape already handled by logging `error`/`subscriptions` — see above — but also relevant to an established connection). Coinbase's `heartbeat` channel, subscribed per product, proves the feed is alive per product and — already noted above — carries `last_trade_id`, which Stage 2 also wants as the gap-detection baseline. So the two mechanisms answer different questions: "is the socket up" (ping/pong) vs. "is this product's data still flowing, and what's the last trade_id I should expect continuity from" (heartbeat).
+Breaks if: this is not designed yet — deferred to Stage 2 by explicit instruction. Recorded now so Stage 2 doesn't have to rediscover that one mechanism doesn't substitute for the other.
+## Coinbase message types: handle `match`, `subscriptions`, and `error` explicitly; skip `last_match` deliberately
+
+Chose: an explicit switch on the WebSocket message's `type` field — produce to Kafka only for `type === "match"`; log the `subscriptions` confirmation at info level once, right after connecting; log `error` messages loudly (not swallowed); explicitly recognize and skip `last_match` (Coinbase sends one per product immediately after subscribing, containing the most recent trade from before the subscription); log a warning and drop anything else unrecognized.
+Over: only handling `match` and ignoring everything else silently.
+Because: a bad `product_id` (typo in `SYMBOLS`, or a delisted/renamed pair) doesn't error the WebSocket connection — Coinbase just never sends `match` messages for it, which looks identical to "market is quiet" from the ingester's point of view. Without logging `error` messages loudly and confirming `subscriptions`, that failure mode is silent: the vertical slice "works" (connects, stays open) while producing nothing, and the "Done when" `kcat` check would just show an empty topic with no clue why.
+Breaks if: nothing now — `last_match` is skipped, not produced, but it's not thrown away conceptually: its `trade_id` is the natural baseline for Stage 2's gap detection (the first real `match` after subscribing should be compared against `last_match`'s `trade_id`, not treated as if there's no prior state at all). Recorded here so Stage 2 doesn't have to rediscover this message exists.
+
+## Coinbase subscription scope: the full configured `SYMBOLS` list, not a first-symbol special case
+
+Chose: `config.ts` reads all of `SYMBOLS` and subscribes to the full list in one `product_ids` array.
+Over: subscribing only to the first configured symbol as a Stage-1-specific simplification.
+Because: `product_ids` already accepts an array — there's no per-symbol subscription call to fan out, so handling the full list costs nothing extra in code. Special-casing "just the first one" would be an artificial restriction that adds a code path (and a TODO) purely to look more like a "vertical slice," when the real vertical-slice scope reduction is behavioral (no reconnect, no idempotence config, no gap logging — Stage 2's job), not about how many symbols are subscribed. Dev's `.env` sets `SYMBOLS=BTC-USD` for Stage 1, so in practice exactly one symbol flows regardless — but the code path handles N from the start, consistent with invariant #8.
+Breaks if: nothing — this removes a special case rather than adding one.
+
+## Environment variables: Node's built-in `--env-file`, not `dotenv`
+
+Chose: `node --env-file=.env` (via the `dev` npm script), no `dotenv` dependency.
+Over: `dotenv`.
+Because: `--env-file` has been stable in Node since well before 24 (confirmed present in `node --help` on this machine), does the same job (load `KEY=value` pairs from a file into `process.env` before the script runs) as `dotenv`'s core use case, and needs zero dependencies for it. `dotenv` earns its keep when something needs `.env`-loading as a library call (e.g. loading it conditionally, or from a non-standard path at runtime) — Stage 1 doesn't need that, just "load `.env` before the script starts."
+Breaks if: a later stage needs `.env` loading behavior `--env-file` doesn't offer (e.g. variable expansion/interpolation between `.env` entries) — `dotenv` supports that, `--env-file` doesn't. Not needed yet.
+
 ## Ingester base image: `node:<lts>-slim`, not Alpine
 
 Chose: `node:<lts>-slim` (Debian-based) as the eventual ingester container's base image.
 Over: `node:<lts>-alpine`.
 Because: `@confluentinc/kafka-javascript` is a native addon built on librdkafka (prebuilt binaries per platform, or a node-gyp/CMake build as a fallback). Alpine's musl libc is a common source of native-module breakage — either missing prebuilt binaries for the musl target (forcing a from-source build that then needs build tooling installed in the image) or subtle runtime issues that don't show up on glibc. `slim` keeps the image reasonably small while staying on glibc, avoiding that whole class of problem.
 Breaks if: not verified yet — this is a Stage 1 note, decided now (while other base-image-adjacent decisions are being made) so it doesn't surprise us mid-stage; confirm `@confluentinc/kafka-javascript` actually installs and runs cleanly on `node:<lts>-slim` before writing the ingester Dockerfile.
+
+## Open question for Stage 3 (not solved now): simultaneous matches from one taker order all get Δt=0
+
+Chose: not addressing this now — recorded so Stage 3's EMA implementation doesn't discover it mid-stage.
+Over: designing around it in the ingester or the message schema today (e.g. synthesizing a sub-timestamp tiebreaker, or coalescing same-timestamp matches).
+Because: a single taker order that matches against several resting orders produces multiple `match` messages sharing the exact same `time` value (each maker fill is a separate trade with its own `trade_id`, but Coinbase timestamps the whole taker order's fills identically). Stage 3's EMA update takes `Δt` from `exchangeTs`, and `alpha = 1 - exp(-Δt/τ)`. When `Δt = 0`, `alpha = 0`, so the EMA update is a no-op — the second, third, etc. match at an identical timestamp changes `lastOffset` and gets stored, but has zero effect on the EMA value, even though each is a real, distinct trade at (possibly) a different price. The first match in the group is the only one that actually moves the EMA.
+Breaks if: this becomes visible as "the EMA doesn't seem to react to some trades" during Stage 3 verification, especially during volatile bursts where large taker orders sweeping the book are common — worth deciding then whether that's acceptable (arguably it's a defensible reading of "time-decayed" — no time passed, so no decay applies) or whether same-timestamp matches should be coalesced (e.g. volume-weighted average price across the batch) before feeding the EMA. Not a Stage 1/2 concern.
