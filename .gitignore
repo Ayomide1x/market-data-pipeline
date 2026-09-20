@@ -1,0 +1,20 @@
+# Local-only
+CLAUDE.local.md
+.env
+
+# Node
+node_modules/
+
+# Java (covers both Maven and Gradle)
+target/
+build/
+.gradle/
+
+# Frontend
+dist/
+.vercel/
+
+# OS / editor
+.DS_Store
+.idea/
+*.log
