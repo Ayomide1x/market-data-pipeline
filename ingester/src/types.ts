@@ -22,10 +22,25 @@ export interface CoinbaseMatchMessage {
   sequence: number;
 }
 
+// Same field shape as CoinbaseMatchMessage (confirmed live: Coinbase sends `last_match`
+// with `price`/`size`/`time`/`sequence` too, not just `trade_id`/`product_id`) — Stage 2
+// needs those fields to produce this trade on a reconnect. See DECISIONS.md.
 export interface CoinbaseLastMatchMessage {
   type: "last_match";
   trade_id: number;
   product_id: string;
+  price: string;
+  size: string;
+  time: string;
+  sequence: number;
+}
+
+export interface CoinbaseHeartbeatMessage {
+  type: "heartbeat";
+  sequence: number;
+  last_trade_id: number;
+  product_id: string;
+  time: string;
 }
 
 export interface CoinbaseSubscriptionsMessage {
