@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Recomputes each symbol's EMA from the start of the `ticks` topic and compares it against
+# Redis. See DECISIONS.md and consumer/src/main/java/.../tools/VerifyEma.java.
+set -euo pipefail
+cd "$(dirname "$0")/../consumer"
+./mvnw -q spring-boot:run -Dspring-boot.run.main-class=com.marketdatapipeline.consumer.tools.VerifyEma

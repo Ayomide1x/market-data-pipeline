@@ -6,6 +6,19 @@ spring:
     consumer:
       group-id: ema-consumers
       auto-offset-reset: earliest
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      # Without this, Lettuce's own default (60s) governs every blocked command, not the
+      # error handler's backoff — discovered live: a Redis outage took 60s+ per retry
+      # attempt to even fail, not the few seconds the backoff config implies. See DECISIONS.md.
+      timeout: 2000ms
+
+app:
+  ema:
+    # Reacts to a price move over tens of seconds, not individual trades. See DECISIONS.md.
+    tau-ms: ${EMA_TAU_MS:300000}
 
 logging:
   structured:
