@@ -6,6 +6,17 @@ spring:
     consumer:
       group-id: ema-consumers
       auto-offset-reset: earliest
+      # Distinguishes instances in logs/kafka-consumer-groups --describe when running more
+      # than one locally (Stage 4) — Kafka's own auto-generated client-id is per-JVM, not
+      # per-process, so two separate instances would otherwise both log as "...-1".
+      client-id: ${CONSUMER_CLIENT_ID:consumer-ema-consumers}
+      properties:
+        # Classic group protocol, cooperative-sticky alone (not the client's own default
+        # list, [Range, CooperativeSticky] — that list exists for migrating an existing
+        # production group off Range in one bounce, which doesn't apply starting fresh).
+        # See DECISIONS.md for why this stays on the classic protocol, not KIP-848's newer
+        # "consumer" one.
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}

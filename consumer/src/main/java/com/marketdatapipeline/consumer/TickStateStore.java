@@ -2,6 +2,7 @@ package com.marketdatapipeline.consumer;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -16,7 +17,7 @@ public class TickStateStore {
   private final StringRedisTemplate redisTemplate;
   private final RedisScript<List> applyTickScript;
   // Never keyed by partition (see DECISIONS.md) — the symbol set is already fully known
-  // from config, and Stage 4's revocation hook only needs clear(symbol).
+  // from config, and clearForPartitions resolves partition -> symbol by scanning values.
   private final Map<String, SymbolState> cache = new ConcurrentHashMap<>();
 
   public TickStateStore(StringRedisTemplate redisTemplate, RedisScript<List> applyTickScript) {
@@ -60,9 +61,24 @@ public class TickStateStore {
     return new ApplyResult("applied".equals(status), currentState);
   }
 
-  /** Stage 4's revocation hook — nothing calls this yet (see DECISIONS.md). */
+  /** Direct single-symbol clear — used by clearForPartitions below. */
   public void clear(String symbol) {
     cache.remove(symbol);
+  }
+
+  /**
+   * Stage 4's revocation hook: clears every cached symbol whose partition is in
+   * {@code revokedPartitions}. Also clears any entry still at partition -1 (written
+   * before this field existed, never yet refreshed by a successful applyTick) — its real
+   * partition is unknown, so it might be one of the revoked ones; -1 can't be excluded
+   * just because it isn't literally in the revoked set. See DECISIONS.md.
+   */
+  public void clearForPartitions(Set<Integer> revokedPartitions) {
+    cache.entrySet()
+        .removeIf(entry -> {
+          int partition = entry.getValue().partition();
+          return partition == -1 || revokedPartitions.contains(partition);
+        });
   }
 
   private SymbolState readFromRedis(String symbol) {

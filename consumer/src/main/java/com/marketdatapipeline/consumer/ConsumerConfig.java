@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
@@ -32,6 +33,14 @@ public class ConsumerConfig {
     script.setLocation(new ClassPathResource("scripts/apply_tick.lua"));
     script.setResultType((Class) List.class);
     return script;
+  }
+
+  // Picked up by Boot's autoconfigured listener factory the same way the error handler
+  // below is (verified, not assumed — see DECISIONS.md). Clears the in-memory cache on
+  // revocation/loss so it never outlives partition ownership (invariant #4, Stage 4).
+  @Bean
+  public ConsumerAwareRebalanceListener rebalanceListener(TickStateStore stateStore) {
+    return new RebalanceListener(stateStore);
   }
 
   // Malformed records (bad JSON, invalid fields, a null key) are never retried — retrying

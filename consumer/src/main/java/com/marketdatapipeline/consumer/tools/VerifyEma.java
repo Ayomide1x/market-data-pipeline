@@ -28,15 +28,40 @@ import tools.jackson.databind.ObjectMapper;
  * consumer group, so it never commits and never appears in `kafka-consumer-groups
  * --describe` for `ema-consumers`.
  *
+ * <p>This is a point-in-time comparison: it refuses to run at all while the ingester or
+ * consumer is alive, since either one still moving makes "does Redis match a full replay"
+ * a race, not a fact — see DECISIONS.md. scripts/verify-stage3.sh freezes both before
+ * calling this; run by hand, stop them first.
+ *
  * <p>Run via: tools/verify-ema
  */
 public final class VerifyEma {
 
   private static final String TOPIC = "ticks";
+  private static final int EXIT_REFUSED = 2;
+
+  // Same patterns scripts/verify-stage3.sh matches on to find these processes.
+  private static final List<String> LIVE_PROCESS_PATTERNS =
+      List.of("com.marketdatapipeline.consumer.ConsumerApplication", "src/index.ts");
 
   private VerifyEma() {}
 
   public static void main(String[] args) {
+    List<String> live = findLiveProcesses();
+    if (!live.isEmpty()) {
+      System.err.println(
+          "Refusing to run: found " + live.size() + " live ingester/consumer process(es).");
+      System.err.println(
+          "tools/verify-ema is a point-in-time comparison. While either is still running, Redis"
+              + " keeps moving after this tool finishes its replay of the topic, so a mismatch"
+              + " here doesn't mean a real bug — it means the target moved. Stop both, then");
+      System.err.println("re-run. (scripts/verify-stage3.sh does this for you automatically.)");
+      for (String p : live) {
+        System.err.println("  " + p);
+      }
+      System.exit(EXIT_REFUSED);
+    }
+
     String bootstrapServers = env("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:29092");
     String redisHost = env("REDIS_HOST", "127.0.0.1");
     int redisPort = Integer.parseInt(env("REDIS_PORT", "6379"));
@@ -165,6 +190,14 @@ public final class VerifyEma {
         symbol, expected.price(), expected.ema(), expected.lastOffset(), expected.partition(),
         actualPrice, actual.get("ema"), actualOffset, actualPartition);
     return false;
+  }
+
+  private static List<String> findLiveProcesses() {
+    return ProcessHandle.allProcesses()
+        .filter(ph -> ph.pid() != ProcessHandle.current().pid())
+        .map(ph -> ph.info().commandLine().orElse(""))
+        .filter(cmd -> LIVE_PROCESS_PATTERNS.stream().anyMatch(cmd::contains))
+        .toList();
   }
 
   private static String env(String key, String fallback) {
