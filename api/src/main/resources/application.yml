@@ -1,0 +1,33 @@
+server:
+  port: ${SERVER_PORT:8080}
+  # Lets Tomcat's own RemoteIpValve substitute X-Forwarded-For into getRemoteAddr(), but
+  # only when the direct peer is in its internal/private-range allowlist (RFC1918 +
+  # loopback + link-local by default) — which is exactly where Caddy sits on the compose
+  # network, and exactly not where a public-internet client sits. See DECISIONS.md for why
+  # this relies on Tomcat's own default range instead of a narrower hand-picked one.
+  forward-headers-strategy: native
+
+spring:
+  application:
+    name: api
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+app:
+  # Same SYMBOLS format/variable as the ingester and consumer (see DECISIONS.md for the
+  # drift risk this creates — three services, three independent reads of one env var).
+  symbols: ${SYMBOLS:BTC-USD}
+  alert:
+    ttl-seconds: ${ALERT_TTL_SECONDS:3600}
+    global-cap: ${ALERT_GLOBAL_CAP:100}
+    rate-limit-per-minute: ${ALERT_RATE_LIMIT_PER_MINUTE:10}
+  cors:
+    origin: ${CORS_ORIGIN:http://localhost:5173}
+
+logging:
+  structured:
+    format:
+      console: ecs

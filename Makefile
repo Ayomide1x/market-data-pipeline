@@ -1,4 +1,4 @@
-.PHONY: reset verify-stage3 verify-stage4 verify-ema
+.PHONY: reset verify-stage3 verify-stage4 verify-stage5 verify-ema
 
 # Destructive: wipes Kafka/Redis volumes and brings the stack back up fresh. See
 # scripts/reset-dev.sh and DECISIONS.md for why this exists.
@@ -10,6 +10,9 @@ verify-stage3:
 
 verify-stage4:
 	./scripts/verify-stage4.sh
+
+verify-stage5:
+	./scripts/verify-stage5.sh
 
 verify-ema:
 	./tools/verify-ema

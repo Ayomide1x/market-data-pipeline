@@ -1,0 +1,2 @@
+# Enable `sdk env` (or auto-env: https://sdkman.io/usage#config) to activate this on `cd`.
+java=25.0.4-tem
