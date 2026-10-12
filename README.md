@@ -8,12 +8,12 @@ A live crypto market dashboard: trades stream from Coinbase's public WebSocket t
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     CB[Coinbase WS] --> ING[ingester<br/>Node]
     ING -->|"Kafka topic `ticks`<br/>(key = symbol)"| CON[consumer<br/>Spring Boot, group `ema-consumers`]
     CON -->|"apply_tick.lua<br/>(atomic CAS on offset)"| REDIS[(Redis)]
     REDIS -->|pub/sub| API[api<br/>Spring Boot]
-    REDIS -->|alert CRUD| API
+    API -->|alert CRUD| REDIS
     API -->|REST + SSE| FE[frontend<br/>React]
 ```
 
