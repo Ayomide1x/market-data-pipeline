@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { computeAgeMs, formatAge } from '../age';
 import { formatPrice } from '../decimals';
+import { Sparkline } from './Sparkline';
 import type { SymbolRow } from '../types';
 
 type FlashClass = '' | 'flash-up' | 'flash-down';
@@ -26,7 +27,7 @@ const SymbolTableRow = memo(function SymbolTableRow({ row, now }: { row: SymbolR
     return (
       <tr>
         <td>{row.symbol}</td>
-        <td colSpan={3} className="symbol-table__no-data">
+        <td colSpan={4} className="symbol-table__no-data">
           waiting for first trade
         </td>
       </tr>
@@ -41,6 +42,9 @@ const SymbolTableRow = memo(function SymbolTableRow({ row, now }: { row: SymbolR
     <tr>
       <td>{row.symbol}</td>
       <td className={flash}>{row.price !== null ? formatPrice(row.price, row.decimals) : '—'}</td>
+      <td className="symbol-table__trend">
+        <Sparkline history={row.history} />
+      </td>
       <td>{row.ema !== null ? row.ema.toFixed(row.decimals) : '—'}</td>
       <td className="symbol-table__age">{formatAge(computeAgeMs(row.exchangeTs, now))}</td>
     </tr>
@@ -56,6 +60,9 @@ export function SymbolTable({ rows, now }: { rows: Record<string, SymbolRow>; no
         <tr>
           <th>Symbol</th>
           <th>Price</th>
+          <th title="Last 40 ticks received for this symbol — a tick count, not a fixed time window, since ticks aren't evenly spaced. Resets on every reconnect: a snapshot only ever gives one current price, never history.">
+            Trend ⓘ
+          </th>
           <th title="5-minute decay-weighted average — starts at the first price and diverges over time. Nearly equal to price early on is expected, not broken.">
             EMA ⓘ
           </th>

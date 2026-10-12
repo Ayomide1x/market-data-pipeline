@@ -1,3 +1,13 @@
+# -1 disables the main Tomcat entirely — spring-boot-starter-web (added in Stage 9 for
+# Actuator) otherwise starts one on the default 8080 with nothing mapped to it, which
+# collides with api's own 8080 when both run as bare host processes (caught live:
+# "Web server failed to start. Port 8080 was already in use."). The separate
+# management.server.port below keeps running regardless, which is the whole point —
+# this consumer really does serve no HTTP beyond health checks, not even by accident.
+# See DECISIONS.md.
+server:
+  port: -1
+
 spring:
   application:
     name: consumer

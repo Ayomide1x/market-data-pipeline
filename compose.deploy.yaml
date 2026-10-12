@@ -1,0 +1,86 @@
+# Real-deploy-only overlay — applied on the Oracle VM as a fourth file, never locally:
+# docker compose -f compose.yaml -f compose.prod.yaml -f compose.deploy.yaml up -d
+# (compose.prod.yaml alone, with or without compose.prod.local.yaml, remains exactly
+# Stage 9's local-testing configuration — this file changes nothing about what
+# `make prod-up`/`make prod-local-up` run.) Pulls pre-built images (see the `image:`
+# tags added to compose.prod.yaml and scripts/build-and-push.sh) rather than building —
+# the VM never needs the source tree, only these compose files plus a .env with the
+# real SYMBOLS/CORS_ORIGIN/SENTRY_DSN/DOMAIN values.
+
+services:
+  # Neither kafka nor redis has ever had a restart: policy set — Compose's own default
+  # when the key is simply absent is "no" (never auto-restart), which would leave both
+  # sitting stopped after a reboot exactly like Stage 9's on-failure:N would for the app
+  # services (verified live — see DECISIONS.md). Unlike ingester/consumer, neither has a
+  # designed deliberate-non-retryable-exit-code case in this project, so there's no
+  # equivalent tradeoff being made here — this is a pure gap-close, not a traded bound.
+  kafka:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  # Trades away Stage 9's bounded crash-loop for reboot survival — on-failure:N cannot
+  # give the latter (confirmed live: a daemon restart does not resume an on-failure
+  # container, only always/unless-stopped do). This is a real tradeoff, not a pure
+  # upgrade — see DECISIONS.md for exactly what's given up, why it's accepted now
+  # specifically, and what would actually give both properties if this ever needs it
+  # (not built: a persisted-failure-count watchdog, since Docker's and systemd's own
+  # restart counters both reset on their own process restart, same gap either way).
+  ingester:
+    restart: unless-stopped
+
+  consumer:
+    restart: unless-stopped
+    environment:
+      # 1024M/-Xmx768m, not Stage 9's 512M/-Xmx384m: both consumer and api ran at
+      # 81-86% of 512M locally under real traffic at dev scale (3 symbols) — closer to
+      # the ceiling than production's 10-20 symbols would leave comfortable, and the
+      # Oracle box has far more headroom than the 4GB this was originally planned
+      # against (Stage 5's deployment-target change). Heap kept well under the new
+      # container limit, same margin as before, just at a size with real room in it.
+      JAVA_TOOL_OPTIONS: "-Xmx768m -Xms768m"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  api:
+    restart: unless-stopped
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx768m -Xms768m"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # New here — Stage 9 never needed Caddy locally (no real domain/TLS to test against).
+  # Automatic TLS is Caddy's own default behavior, not something turned on explicitly;
+  # flush_interval -1 IS explicit, deliberately, rather than relying on an unstated
+  # default for the one thing that would silently break Stage 7's whole point if wrong.
+  # See Caddyfile and DECISIONS.md.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    command: ["caddy", "run", "--config", "/etc/caddyfile"]
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set to the real .dev domain}
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy-data:
+  caddy-config:

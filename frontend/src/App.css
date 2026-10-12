@@ -121,6 +121,31 @@
   font-style: italic;
 }
 
+.symbol-table__trend {
+  width: 80px;
+}
+
+.sparkline {
+  display: block;
+}
+
+.sparkline__line {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.sparkline__line--up {
+  stroke: var(--green);
+}
+
+.sparkline__line--down {
+  stroke: var(--red);
+}
+
+.sparkline__line--flat {
+  stroke: var(--gray);
+}
+
 .flash-up {
   background-color: var(--green-bg);
   color: var(--green);

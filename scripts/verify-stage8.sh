@@ -85,6 +85,13 @@ echo "     call succeeds even if clicked twice (second is a 404, handled quietly
 echo "  7. Clear localStorage and reload: 'My alerts' is empty, but any"
 echo "     previously-created alert is still armed/evaluated server-side (check via"
 echo "     redis-cli or the api directly) — losing the id doesn't affect the alert."
+echo "  8. Trend column: empty (no line) right after a symbol's row first appears,"
+echo "     then a line builds in as ticks arrive — green when the latest tick is up"
+echo "     from the one before it, red when down. BTC's line and SOL's line should"
+echo "     both show visible movement despite the three-order-of-magnitude price"
+echo "     difference (each is scaled to its own window's min/max, not a shared"
+echo "     scale). Stop and restart the api: the line resets to empty and rebuilds"
+echo "     from scratch on reconnect, not continuing from pre-drop history."
 
 [ "$FAIL" -eq 0 ]
 exit $?

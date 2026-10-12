@@ -60,6 +60,12 @@ services:
         max-file: "3"
 
   ingester:
+    # image + build together: `docker compose build` (locally, on this already-arm64
+    # machine) tags the result as this name, ready for `docker compose push`; the real
+    # VM's compose invocation (compose.yaml + compose.prod.yaml + compose.deploy.yaml,
+    # no build context needed there at all) just pulls it by this same name. See
+    # DECISIONS.md and scripts/build-and-push.sh.
+    image: ghcr.io/ayomide1x/mdp-ingester:latest
     build:
       context: ./ingester
       dockerfile: Dockerfile
@@ -89,6 +95,7 @@ services:
         max-file: "3"
 
   consumer:
+    image: ghcr.io/ayomide1x/mdp-consumer:latest
     build:
       context: ./consumer
       dockerfile: Dockerfile
@@ -119,6 +126,7 @@ services:
         max-file: "3"
 
   api:
+    image: ghcr.io/ayomide1x/mdp-api:latest
     build:
       context: ./api
       dockerfile: Dockerfile

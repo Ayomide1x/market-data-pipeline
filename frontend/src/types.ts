@@ -64,6 +64,11 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'fa
 // derived from the data, not hardcoded per symbol — so the displayed column stays at a
 // stable width instead of jittering as trailing zeros come and go. See decimals.ts and
 // DECISIONS.md.
+// history is a rolling window of the last SPARKLINE_WINDOW *ticks received* for this
+// symbol (not a fixed time window — ticks aren't evenly spaced, see sparkline.ts and
+// DECISIONS.md), reset to a single point on every snapshot (connect or reconnect): the
+// snapshot only ever gives one current price, never history, so the window necessarily
+// starts over rather than being synthesized from anything else (EMA included).
 export interface SymbolRow {
   symbol: string;
   hasData: boolean;
@@ -71,4 +76,5 @@ export interface SymbolRow {
   ema: number | null;
   exchangeTs: number | null;
   decimals: number;
+  history: number[];
 }

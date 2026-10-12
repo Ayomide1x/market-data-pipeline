@@ -1,0 +1,12 @@
+# Local-only addition to compose.prod.yaml — never applied on the real Oracle VM, where
+# Caddy is what fronts the api and nothing else should publish a port at all. This exists
+# purely so "run the prod stack locally first" (this project's own standing instruction)
+# is something a human can actually point a browser at, not just confirm via curl/logs.
+# Applied as a third file: docker compose -f compose.yaml -f compose.prod.yaml -f compose.prod.local.yaml up
+# (or `make prod-local-up`, which wires this exactly). Bound to loopback, same convention
+# already established for compose.override.yaml's dev ports — nothing but this machine
+# can reach it even locally. See DECISIONS.md.
+services:
+  api:
+    ports:
+      - "127.0.0.1:8080:8080"

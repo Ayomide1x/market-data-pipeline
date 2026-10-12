@@ -13,7 +13,11 @@ public final class HealthCheckCli {
   private HealthCheckCli() {}
 
   public static void main(String[] args) {
-    int port = Integer.parseInt(System.getenv().getOrDefault("MANAGEMENT_PORT", "8081"));
+    // 8082: must match application.yml's own MANAGEMENT_PORT default exactly — neither
+    // compose.prod.yaml nor this fallback ever has the other to cross-check against at
+    // runtime, so a mismatch here would silently check the wrong port and report this
+    // container unhealthy forever whenever MANAGEMENT_PORT isn't explicitly passed in.
+    int port = Integer.parseInt(System.getenv().getOrDefault("MANAGEMENT_PORT", "8082"));
     HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     HttpRequest request = HttpRequest.newBuilder()
         .uri(URI.create("http://127.0.0.1:" + port + "/actuator/health"))

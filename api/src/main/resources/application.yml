@@ -47,9 +47,16 @@ app:
 # failure mode is just "can it reach Redis," which Actuator's autoconfigured Redis
 # indicator already reports correctly (confirmed live on the consumer's identical
 # dependency). See DECISIONS.md.
+#
+# 8082, not 8081: the consumer's own management port defaults to 8081, and the two
+# collide ("Port 8081 was already in use") the moment both run as bare host processes
+# side by side — the normal way to run all four services locally for dev, not an edge
+# case. Separate containers in compose.prod.yaml never actually collide (each has its
+# own network namespace), but the two services' defaults matching was a trap for local
+# testing regardless of how real the risk was in production. See DECISIONS.md.
 management:
   server:
-    port: ${MANAGEMENT_PORT:8081}
+    port: ${MANAGEMENT_PORT:8082}
   endpoints:
     web:
       exposure:

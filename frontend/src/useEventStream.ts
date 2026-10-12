@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from './config';
 import { decimalPlaces } from './decimals';
 import { isAlertFired, isSymbolSnapshot, isTickUpdate, parseSseData } from './sseGuards';
+import { pushHistory } from './sparkline';
 import type { AlertFired, ConnectionStatus, SymbolRow } from './types';
 
 interface UseEventStreamResult {
@@ -58,6 +59,12 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
       setRows((prev) => {
         const priorDecimals = prev[snap.symbol]?.decimals ?? 0;
         const decimals = snap.price === null ? priorDecimals : Math.max(priorDecimals, decimalPlaces(snap.price));
+        // Reset, not appended to whatever history (if any) predates this snapshot: a
+        // snapshot — whether this is the first connect or a reconnect after a drop —
+        // only ever gives one current price, never history, and a drop may have missed
+        // ticks in between. Appending onto old history would draw a line across a gap
+        // that isn't really continuous data. See DECISIONS.md.
+        const history = snap.price === null ? [] : [Number(snap.price)];
         return {
           ...prev,
           [snap.symbol]: {
@@ -67,6 +74,7 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
             ema: snap.ema,
             exchangeTs: snap.exchangeTs,
             decimals,
+            history,
           },
         };
       });
@@ -83,9 +91,18 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
         // from the data actually observed, not a hardcoded per-symbol value. See
         // decimals.ts and DECISIONS.md.
         const decimals = Math.max(prev[tick.symbol].decimals, decimalPlaces(tick.price));
+        const history = pushHistory(prev[tick.symbol].history, Number(tick.price));
         return {
           ...prev,
-          [tick.symbol]: { symbol: tick.symbol, hasData: true, price: tick.price, ema: tick.ema, exchangeTs: tick.exchangeTs, decimals },
+          [tick.symbol]: {
+            symbol: tick.symbol,
+            hasData: true,
+            price: tick.price,
+            ema: tick.ema,
+            exchangeTs: tick.exchangeTs,
+            decimals,
+            history,
+          },
         };
       });
     });
