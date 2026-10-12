@@ -6,6 +6,15 @@ server:
   # network, and exactly not where a public-internet client sits. See DECISIONS.md for why
   # this relies on Tomcat's own default range instead of a narrower hand-picked one.
   forward-headers-strategy: native
+  # Boot's actual default here is GRACEFUL (confirmed by decompiling ServerProperties'
+  # constructor), which waits up to spring.lifecycle.timeout-per-shutdown-phase (30s) for
+  # "active requests" to finish before forcing them closed. An SSE stream is never
+  # finished by design — graceful mode doesn't wait less for one, it waits the FULL grace
+  # period, every single shutdown, for every still-connected client. Confirmed live: a
+  # connected curl client was still alive 25s after SIGTERM under the default. IMMEDIATE
+  # closes the connector right away instead, which is what "killing the api makes clients
+  # reconnect" (CLAUDE.md's own done-when) actually needs. See DECISIONS.md.
+  shutdown: immediate
 
 spring:
   application:
@@ -26,6 +35,11 @@ app:
     rate-limit-per-minute: ${ALERT_RATE_LIMIT_PER_MINUTE:10}
   cors:
     origin: ${CORS_ORIGIN:http://localhost:5173}
+  sse:
+    # 100ms: still coalesces a meaningful burst of trades into one update per symbol,
+    # fast enough to read as live. Heartbeat interval is separately fixed at 15s (the
+    # keep-alive path, not the data path) — see DECISIONS.md.
+    throttle-ms: ${SSE_THROTTLE_MS:100}
 
 logging:
   structured:

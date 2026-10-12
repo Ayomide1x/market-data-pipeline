@@ -71,15 +71,13 @@ public class TickConsumer {
     // isn't atomic with Lua's write, but Lua's offset CAS is the actual gate either way).
     Double previousPrice = previous == null ? null : Double.parseDouble(previous.price());
     List<String> crossedAlertIds = new ArrayList<>();
-    List<String> crossedAlertKeys = new ArrayList<>();
     for (Alert alert : armedAlerts) {
       if (CrossingDetector.crossed(previousPrice, price, alert.direction(), alert.threshold())) {
         crossedAlertIds.add(alert.id());
-        crossedAlertKeys.add(AlertStore.alertKey(alert.id()));
       }
     }
 
-    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate, crossedAlertKeys);
+    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate, crossedAlertIds);
 
     // "applied" means every id in crossedAlertIds just got marked fired by the same
     // write — the script never touches them on skipped/partition_mismatch (invariant

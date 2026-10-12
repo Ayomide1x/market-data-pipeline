@@ -35,23 +35,28 @@ public class TickStateStore {
    * Calls apply_tick.lua and always resyncs the cache from its returned state, whether
    * applied or skipped — a skip means Redis is ahead of what Java computed, not behind
    * (see DECISIONS.md for the cache-staleness bug this fixes, which Stage 6's crossing
-   * detection now also depends on). {@code alertKeysToFire} (alert:{id} keys the caller
-   * already determined crossed this tick, possibly empty) are marked fired in the same
-   * atomic write, but only if this tick is actually applied — see apply_tick.lua.
+   * detection also depends on). {@code alertIdsToFire} (bare alert ids the caller
+   * already determined crossed this tick, possibly empty) are marked fired — and, since
+   * Stage 7, PUBLISHed on alerts:fired — in the same atomic write, but only if this tick
+   * is actually applied; see apply_tick.lua for exactly why and how.
    */
-  public ApplyResult applyTick(String symbol, SymbolState candidate, List<String> alertKeysToFire) {
-    List<String> keys = new ArrayList<>(1 + alertKeysToFire.size());
+  public ApplyResult applyTick(String symbol, SymbolState candidate, List<String> alertIdsToFire) {
+    List<String> keys = new ArrayList<>(1 + alertIdsToFire.size());
     keys.add(stateKey(symbol));
-    keys.addAll(alertKeysToFire);
+    for (String id : alertIdsToFire) {
+      keys.add(AlertStore.alertKey(id));
+    }
 
-    List<String> result = redisTemplate.execute(
-        applyTickScript,
-        keys,
-        candidate.price(),
-        Double.toString(candidate.ema()),
-        Long.toString(candidate.exchangeTs()),
-        Long.toString(candidate.lastOffset()),
-        Integer.toString(candidate.partition()));
+    List<Object> argv = new ArrayList<>(6 + alertIdsToFire.size());
+    argv.add(candidate.price());
+    argv.add(Double.toString(candidate.ema()));
+    argv.add(Long.toString(candidate.exchangeTs()));
+    argv.add(Long.toString(candidate.lastOffset()));
+    argv.add(Integer.toString(candidate.partition()));
+    argv.add(symbol);
+    argv.addAll(alertIdsToFire);
+
+    List<String> result = redisTemplate.execute(applyTickScript, keys, argv.toArray());
 
     String status = result.get(0);
     SymbolState currentState = new SymbolState(
