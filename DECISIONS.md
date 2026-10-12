@@ -825,3 +825,35 @@ Chose: `session.emitter().complete()`, with `cause` used only for the eviction's
 Over: `session.emitter().completeWithError(cause)` (the original version).
 Because: `completeWithError` dispatches the given `Throwable` through Spring MVC's normal exception-resolution path to write an error response body — which assumes there's a sane error representation left to write. On an SSE response, the headers (and usually some event bytes) are already committed by the time any eviction path runs, so there's nothing coherent to write regardless. **Found live:** every eviction logged a second line immediately after it — `"Ignoring exception, response committed already: ... No converter for [class java.util.LinkedHashMap] with preset Content-Type 'text/event-stream'"` — harmless (caught and ignored by Spring itself) but real, needless noise on every single disconnection, not just error ones. The client was already gone or going; it never received, and couldn't meaningfully use, whatever body `completeWithError` tried to construct. `complete()` ends the async context the same way, without attempting to write anything further.
 Breaks if: nothing yet.
+
+# Stage 8 — React frontend
+
+## Four connection states, not two
+
+Chose: `connecting` (never successfully connected, browser retrying), `connected`, `reconnecting` (was connected, dropped, retrying), `failed` (readyState `CLOSED`).
+Over: a boolean connected/disconnected badge.
+Because: a visitor loading the page while the api is already down would otherwise see an empty table plus a "disconnected" badge with no explanation — the worst first impression available, and the single most likely failure a recruiter actually hits. `onerror` checks `es.readyState`: `CONNECTING` means the browser already scheduled its own retry (native `EventSource` reconnects on its own — no hand-rolled backoff needed); `CLOSED` only happens for a fatal cause (non-200/wrong content-type response, or this code calling `.close()`) and gets a manual "Reload" button since the browser itself won't retry further.
+Breaks if: nothing yet.
+
+## `VITE_SYMBOLS` (static, build-time) for the alert form; live snapshot events (not config) for the table's rows
+
+Chose: the alert form's symbol choices come from a build-time env var, independent of the SSE stream. The table's actual rows still come only from `snapshot` events, per Stage 7's rule (ignore a `tick` for a symbol never seen in a snapshot).
+Because: sourcing the form from `knownSymbols` (populated only by snapshot events) would make the form dead until the stream connects — directly worsening the "api down at first load" problem rather than mitigating it. The form and the table are allowed different availability requirements on purpose: the form needs to work when the backend doesn't; the table's content must reflect only what the backend actually confirmed exists. This is a fourth, now-acknowledged instance of the `SYMBOLS`-drift risk already accepted in Stage 5 (ingester, consumer, api, now frontend all read it independently), not a new risk category.
+Breaks if: nothing yet.
+
+## localStorage stores the full alert, not a bare id; "unknown" status is distinct from "gone"
+
+Chose: `{id, symbol, direction, threshold, createdAt}` persisted per alert (the create response itself), grouped by symbol for status refresh (one `GET /api/alerts?symbol=` per distinct symbol, not per id). An id absent from a successful list response is pruned (expired or deleted elsewhere — not a 404; the list endpoint doesn't 404, it just omits gone ids). A refresh that fails to reach the server at all leaves the cached row showing with a distinct "status unknown" badge, never pruned on a guess.
+Because: a bare id would mean a failed refresh has nothing to render at all. Conflating "couldn't check" with "confirmed gone" would either prune a perfectly live alert on a transient network blip, or leave a dead one showing as if nothing were wrong — both wrong in different directions. An `alert-fired` SSE event for one of our ids updates status immediately from the event itself; a slow 30s poll separately catches TTL expiry, which pub/sub never announces.
+Breaks if: nothing yet.
+
+## Toasts filtered to "my alerts" only; age always derived live, never stored
+
+Chose: toast only for `alert-fired` events whose id is in local storage; ignore the rest. Row "age" is computed on every render from `exchangeTs` + a shared 1s-ticking clock, never from a fetched/pushed `ageMs` value.
+Because: the stream is global — every connected browser sees every fire, and a toast for a stranger's threshold is noise with nothing actionable in it on a page explicitly designed for simultaneous anonymous viewers (Stage 7 tested exactly that). A stored `ageMs` goes stale the instant it's rendered, for the identical reason it's omitted from the SSE payload itself (Stage 7) — the fix is the same: derive, don't store.
+Breaks if: nothing yet.
+
+## Not done this session, for the record: no real-browser visual verification
+
+The build/typecheck/lint/dev-server-boots checks above all passed live, and `scripts/verify-stage8.sh` automates them. What did **not** happen, due to running out of session time: actually loading the page in a browser (headless or otherwise) and confirming the table renders, the flash animation looks right, and the connection badge actually transitions correctly across a real api stop/restart. `chromium-cli` wasn't available in this environment and a from-scratch Playwright browser install wasn't completed. This is exactly the manual checklist `scripts/verify-stage8.sh` prints — it still needs to be run by a human against a real browser before Stage 8 is considered actually verified, not just "builds."
+Breaks if: this gets skipped and the first real browser test is a recruiter's.
