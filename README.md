@@ -3,20 +3,18 @@
 A live crypto market dashboard: trades stream from Coinbase's public WebSocket through Kafka into a Spring Boot consumer that computes a time-decayed EMA and evaluates user-defined price alerts, with results pushed to a React frontend over Server-Sent Events. Built to understand — and be able to explain in depth — the distributed-systems problems that show up the moment a system has to survive restarts, rebalances, and replays: exactly-once-ish state updates without Kafka transactions, consumer group rebalancing, and reproducible floating-point computation across processes.
 
 **Live demo:** https://market-data-pipeline-one.vercel.app
-**API:** https://api.ayomideo.dev
+**API:** https://api.ayomideo.dev/api/symbols
 
 ## Architecture
 
-```
-Coinbase WS ──▶ ingester (Node) ──▶ Kafka topic `ticks` (key = symbol)
-                                           │
-                                           ▼
-                           consumer (Spring Boot, group `ema-consumers`)
-                                           │  apply_tick.lua (atomic CAS on offset)
-                                           ▼
-                                         Redis ◀── alert CRUD ── api (Spring Boot)
-                                           │  pub/sub                  │ REST + SSE
-                                           └───────────────────────────▶ frontend (React)
+```mermaid
+flowchart LR
+    CB[Coinbase WS] --> ING[ingester<br/>Node]
+    ING -->|"Kafka topic `ticks`<br/>(key = symbol)"| CON[consumer<br/>Spring Boot, group `ema-consumers`]
+    CON -->|"apply_tick.lua<br/>(atomic CAS on offset)"| REDIS[(Redis)]
+    REDIS -->|pub/sub| API[api<br/>Spring Boot]
+    REDIS -->|alert CRUD| API
+    API -->|REST + SSE| FE[frontend<br/>React]
 ```
 
 Single Kafka broker (KRaft, no ZooKeeper), one partition per symbol for strict ordering. The API never touches Kafka and never holds authoritative state — Redis is the single source of truth for everything it serves.
