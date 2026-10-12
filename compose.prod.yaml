@@ -137,6 +137,12 @@ services:
       # Required, not defaulted to dev's localhost:5173 — the real value is the Vercel
       # URL, supplied at Stage 10 deploy time. See DECISIONS.md.
       CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set to the real frontend origin}
+      # Missing here until this fix — api silently ran on its own `${SYMBOLS:BTC-USD}`
+      # default instead of the real configured list. Same required-not-defaulted
+      # treatment as the ingester's: a wrong or missing value here is wrong for every
+      # alert validated and every row the api claims to have data for, so it should fail
+      # to start rather than silently serve one symbol. See DECISIONS.md.
+      SYMBOLS: ${SYMBOLS:?SYMBOLS must be set}
     depends_on:
       redis:
         condition: service_healthy

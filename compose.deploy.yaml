@@ -16,6 +16,28 @@ services:
   # equivalent tradeoff being made here — this is a pure gap-close, not a traded bound.
   kafka:
     restart: unless-stopped
+    # First pass at this (timeout 15s/start_period 60s) assumed the x86-vs-arm64 gap was
+    # the ~20% slowdown the api showed. Measured directly on the real box, it's 10x, not
+    # 20%: kafka-broker-api-versions.sh took 45s there (under 5s locally) — free-tier
+    # Ampere CPU shares, not a hang. Timeout/start_period raised again to match. The test
+    # itself is also replaced below — see DECISIONS.md for why a JVM-spawning probe is
+    # the wrong shape of check on CPU-starved hardware, verified before switching it.
+    healthcheck:
+      # Replaces compose.yaml's kafka-broker-api-versions.sh (a full JVM spawn — the
+      # Kafka CLI tools boot a JVM to send one request) with a bare TCP connect: busybox
+      # `nc` is already in apache/kafka:4.3.1, costs no JVM startup, and — confirmed by
+      # reading this exact config's own startup log, not assumed — the broker's listener
+      # socket for 9092 only starts accepting once BrokerServer finishes unfencing and
+      # transitions to RUNNING (`Finished waiting for all of the SocketServer Acceptors
+      # to be started` logs under 1ms before `Kafka Server started`), so "port accepts a
+      # connection" and "broker is actually ready" are the same moment for this
+      # single-node KRaft setup. Full `test`/`interval`/`retries` restated — this is no
+      # longer compose.yaml's command, so there's nothing left to merge per-key.
+      test: ["CMD-SHELL", "nc -z -w 5 localhost 9092"]
+      interval: 30s
+      timeout: 60s
+      retries: 10
+      start_period: 180s
 
   redis:
     restart: unless-stopped
@@ -32,6 +54,21 @@ services:
 
   consumer:
     restart: unless-stopped
+    # The Dockerfile's own HEALTHCHECK (timeout=5s, start_period=30s) is a compose-level
+    # blind spot, not a compose-merged field — there's no base-file healthcheck entry for
+    # this service to merge with, so the test command is restated here in full, identical
+    # to the Dockerfile's CMD. Measured on the real box: Spring startup took 233s (api;
+    # consumer's own JVM startup is the same shape), not the mild slowdown first assumed
+    # — timeout/start_period raised again to match, and interval widened so the probe
+    # itself, a JVM spawn (HealthCheckCli isn't cheap on this hardware either, though not
+    # swapped out the way kafka's was — see DECISIONS.md for why), isn't run back-to-back
+    # at near-100% duty cycle once it reliably takes tens of seconds.
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/healthcheck-classes", "HealthCheckCli"]
+      interval: 30s
+      timeout: 60s
+      start_period: 300s
+      retries: 3
     environment:
       # 1024M/-Xmx768m, not Stage 9's 512M/-Xmx384m: both consumer and api ran at
       # 81-86% of 512M locally under real traffic at dev scale (3 symbols) — closer to
@@ -47,6 +84,14 @@ services:
 
   api:
     restart: unless-stopped
+    # Same gap as consumer, same fix, and the measured number: Spring startup took 233s
+    # on the real box. See DECISIONS.md.
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/healthcheck-classes", "HealthCheckCli"]
+      interval: 30s
+      timeout: 60s
+      start_period: 300s
+      retries: 3
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx768m -Xms768m"
     deploy:
