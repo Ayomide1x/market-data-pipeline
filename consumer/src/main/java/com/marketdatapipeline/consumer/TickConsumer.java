@@ -1,5 +1,7 @@
 package com.marketdatapipeline.consumer;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,12 +18,17 @@ public class TickConsumer {
 
   private final ObjectMapper objectMapper;
   private final TickStateStore stateStore;
+  private final AlertStore alertStore;
   private final long tauMs;
 
   public TickConsumer(
-      ObjectMapper objectMapper, TickStateStore stateStore, @Value("${app.ema.tau-ms}") long tauMs) {
+      ObjectMapper objectMapper,
+      TickStateStore stateStore,
+      AlertStore alertStore,
+      @Value("${app.ema.tau-ms}") long tauMs) {
     this.objectMapper = objectMapper;
     this.stateStore = stateStore;
+    this.alertStore = alertStore;
     this.tauMs = tauMs;
   }
 
@@ -47,11 +54,47 @@ public class TickConsumer {
           "malformed tick at partition=" + record.partition() + " offset=" + record.offset(), e);
     }
 
+    // previous feeds both the EMA and crossing detection below — both depend on
+    // TickStateStore's resync-on-skip (the cache always reflects Redis's actual current
+    // state, even after a skip), not just the EMA alone. See DECISIONS.md.
     SymbolState previous = stateStore.load(symbol);
     double newEma = EmaCalculator.compute(previous, price, tick.exchangeTs(), tauMs);
     SymbolState candidate = new SymbolState(tick.price(), newEma, tick.exchangeTs(), record.offset(), record.partition());
 
-    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate);
+    long alertLookupStartNanos = System.nanoTime();
+    List<Alert> armedAlerts = alertStore.loadArmed(symbol);
+    long alertLookupMicros = (System.nanoTime() - alertLookupStartNanos) / 1000;
+
+    // Evaluated optimistically against whatever `previous` currently is, before knowing
+    // whether this tick will even be applied — safe because apply_tick.lua only acts on
+    // this candidate list inside its own applied branch (see DECISIONS.md: Java's read
+    // isn't atomic with Lua's write, but Lua's offset CAS is the actual gate either way).
+    Double previousPrice = previous == null ? null : Double.parseDouble(previous.price());
+    List<String> crossedAlertIds = new ArrayList<>();
+    List<String> crossedAlertKeys = new ArrayList<>();
+    for (Alert alert : armedAlerts) {
+      if (CrossingDetector.crossed(previousPrice, price, alert.direction(), alert.threshold())) {
+        crossedAlertIds.add(alert.id());
+        crossedAlertKeys.add(AlertStore.alertKey(alert.id()));
+      }
+    }
+
+    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate, crossedAlertKeys);
+
+    // "applied" means every id in crossedAlertIds just got marked fired by the same
+    // write — the script never touches them on skipped/partition_mismatch (invariant
+    // #5's replay safety), and the candidate list itself already excluded anything not
+    // currently armed, so this can't double-log a previously-fired alert.
+    if (result.applied()) {
+      for (String alertId : crossedAlertIds) {
+        log.atInfo()
+            .addKeyValue("symbol", symbol)
+            .addKeyValue("partition", record.partition())
+            .addKeyValue("offset", record.offset())
+            .addKeyValue("alertId", alertId)
+            .log("alert fired");
+      }
+    }
 
     // A skip whose own exchangeTs is newer than what's stored can only happen if the
     // topic was recreated while Redis state wasn't reset (see DECISIONS.md) — an ordinary
@@ -77,6 +120,7 @@ public class TickConsumer {
         .addKeyValue("price", tick.price())
         .addKeyValue("ema", result.currentState().ema())
         .addKeyValue("applied", result.applied())
+        .addKeyValue("alertLookupMicros", alertLookupMicros)
         .log("tick processed");
   }
 }

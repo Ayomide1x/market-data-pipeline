@@ -179,11 +179,11 @@ report $? "set membership does not self-clean on hash TTL expiry (SCARD stayed $
 
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/alerts" -H 'Content-Type: application/json' -d "{\"symbol\":\"$SECOND_SYMBOL\",\"direction\":\"above\",\"threshold\":\"1\"}")
 [ "$STATUS" = "201" ]
-report $? "create on a different symbol succeeds once the expired ids are resolved out of the cap count, with \$FIRST_SYMBOL's set never read via list() (got $STATUS)"
+report $? "create on a different symbol succeeds once the expired ids are resolved out of the cap count, with $FIRST_SYMBOL's set never read via list() (got $STATUS)"
 
 SCARD_AFTER_CLEANUP=$(redis-cli -h 127.0.0.1 -p 6379 SCARD "alerts:$FIRST_SYMBOL")
 [ "$SCARD_AFTER_CLEANUP" -lt "$SCARD_AFTER_EXPIRY" ]
-report $? "checkGlobalCapWithCleanup pruned \$FIRST_SYMBOL's dead ids as a side effect of counting (SCARD: $SCARD_AFTER_EXPIRY -> $SCARD_AFTER_CLEANUP)"
+report $? "checkGlobalCapWithCleanup pruned $FIRST_SYMBOL's dead ids as a side effect of counting (SCARD: $SCARD_AFTER_EXPIRY -> $SCARD_AFTER_CLEANUP)"
 
 echo ""
 echo "--- CORS exact-origin allowlist ---"

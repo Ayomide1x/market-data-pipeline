@@ -1,5 +1,6 @@
 package com.marketdatapipeline.consumer;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,12 +34,19 @@ public class TickStateStore {
   /**
    * Calls apply_tick.lua and always resyncs the cache from its returned state, whether
    * applied or skipped — a skip means Redis is ahead of what Java computed, not behind
-   * (see DECISIONS.md for the cache-staleness bug this fixes).
+   * (see DECISIONS.md for the cache-staleness bug this fixes, which Stage 6's crossing
+   * detection now also depends on). {@code alertKeysToFire} (alert:{id} keys the caller
+   * already determined crossed this tick, possibly empty) are marked fired in the same
+   * atomic write, but only if this tick is actually applied — see apply_tick.lua.
    */
-  public ApplyResult applyTick(String symbol, SymbolState candidate) {
+  public ApplyResult applyTick(String symbol, SymbolState candidate, List<String> alertKeysToFire) {
+    List<String> keys = new ArrayList<>(1 + alertKeysToFire.size());
+    keys.add(stateKey(symbol));
+    keys.addAll(alertKeysToFire);
+
     List<String> result = redisTemplate.execute(
         applyTickScript,
-        List.of(stateKey(symbol)),
+        keys,
         candidate.price(),
         Double.toString(candidate.ema()),
         Long.toString(candidate.exchangeTs()),
