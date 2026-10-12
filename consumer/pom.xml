@@ -33,6 +33,31 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
     </dependency>
+    <!-- Brings Tomcat: the consumer had zero HTTP server before this. Needed because
+         Actuator's web exposure requires a web stack present — see DECISIONS.md. Stage
+         9's "health checks for every service" is what CLAUDE.md's stack section already
+         anticipated with "never serves HTTP beyond health checks." -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- Plain SDK, not sentry-spring-boot-starter-jakarta: tried that first and it
+         fails fatally on startup — its own compatibility self-check logs "Incompatible
+         Spring Boot Version detected" and then crashes regardless, because its
+         autoconfiguration reflectively introspects
+         org.springframework.boot.web.client.RestClientCustomizer, which doesn't exist
+         in Boot 4.1.1's restructured packages (confirmed live: NoClassDefFoundError).
+         Sentry's Spring Boot integration hasn't caught up to Boot 4 yet. The plain SDK,
+         initialized by hand, doesn't touch any of that. See DECISIONS.md. -->
+    <dependency>
+      <groupId>io.sentry</groupId>
+      <artifactId>sentry</artifactId>
+      <version>8.60.0</version>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>

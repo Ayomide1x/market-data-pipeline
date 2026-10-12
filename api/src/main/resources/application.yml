@@ -41,6 +41,23 @@ app:
     # keep-alive path, not the data path) — see DECISIONS.md.
     throttle-ms: ${SSE_THROTTLE_MS:100}
 
+# Separate port from the main app (8080), same reasoning as the consumer: health/metrics
+# shouldn't be reachable on the same port as public traffic once this is behind Caddy
+# (Stage 10). No custom health indicator needed here, unlike the consumer — api's own
+# failure mode is just "can it reach Redis," which Actuator's autoconfigured Redis
+# indicator already reports correctly (confirmed live on the consumer's identical
+# dependency). See DECISIONS.md.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
 logging:
   structured:
     format:

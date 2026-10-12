@@ -30,6 +30,24 @@ app:
   ema:
     # Reacts to a price move over tens of seconds, not individual trades. See DECISIONS.md.
     tau-ms: ${EMA_TAU_MS:300000}
+  processing:
+    # How long with no onTick invocation at all before ProcessingHealthIndicator reports
+    # DOWN. Generous relative to observed trade frequency across configured symbols, to
+    # avoid false-positives on an ordinary quiet moment. See DECISIONS.md for this
+    # indicator's stated limit: it catches a stuck/partition-less instance, not group lag.
+    stale-after-ms: ${PROCESSING_STALE_AFTER_MS:60000}
+
+management:
+  server:
+    port: ${MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        # Never beyond health — this consumer serves no other HTTP, per CLAUDE.md.
+        include: health
+  endpoint:
+    health:
+      show-details: always
 
 logging:
   structured:

@@ -19,21 +19,29 @@ public class TickConsumer {
   private final ObjectMapper objectMapper;
   private final TickStateStore stateStore;
   private final AlertStore alertStore;
+  private final ProcessingHeartbeat heartbeat;
   private final long tauMs;
 
   public TickConsumer(
       ObjectMapper objectMapper,
       TickStateStore stateStore,
       AlertStore alertStore,
+      ProcessingHeartbeat heartbeat,
       @Value("${app.ema.tau-ms}") long tauMs) {
     this.objectMapper = objectMapper;
     this.stateStore = stateStore;
     this.alertStore = alertStore;
+    this.heartbeat = heartbeat;
     this.tauMs = tauMs;
   }
 
   @KafkaListener(topics = TOPIC)
   public void onTick(ConsumerRecord<String, String> record) {
+    // Recorded unconditionally, before any validation — this proves the listener
+    // itself is being invoked, which is exactly what Actuator's default health check
+    // can't tell you (it only knows the Spring context is alive). See
+    // ProcessingHealthIndicator and DECISIONS.md.
+    heartbeat.recordProcessed();
     String symbol = record.key();
     if (symbol == null) {
       // Unprocessable, not transient — retrying five times can't produce a key that

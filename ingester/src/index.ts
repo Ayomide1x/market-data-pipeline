@@ -1,3 +1,5 @@
+import { writeFileSync } from "fs";
+import * as Sentry from "@sentry/node";
 import { WebSocket } from "ws";
 import confluentKafka from "@confluentinc/kafka-javascript";
 import { loadConfig } from "./config.js";
@@ -15,6 +17,11 @@ import type { Tick } from "./types.js";
 const { KafkaJS } = confluentKafka;
 const { Kafka } = KafkaJS;
 
+// Unlike the Java SDK (which throws on a null dsn — see consumer/api's
+// ApplicationMain.java and DECISIONS.md), @sentry/node no-ops cleanly with dsn
+// undefined (verified live). A real DSN is a Stage 10 deploy-time value.
+Sentry.init({ dsn: process.env.SENTRY_DSN });
+
 const TOPIC = "ticks";
 const EX_CONFIG = 78;
 
@@ -25,6 +32,24 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 30_000;
 const PRODUCER_MESSAGE_TIMEOUT_MS = 30_000;
 const FLUSH_TIMEOUT_MS = 5_000;
+
+// Docker HEALTHCHECK liveness file — see healthcheck.ts and DECISIONS.md. Touched at
+// exactly the same point this process already updates lastHeartbeatAt for its own
+// internal stale-connection check, so the external signal means the same thing the
+// internal one does: not "is the Node process running" (checking that from outside a
+// single-process container tells you nothing Docker doesn't already know) but "is this
+// connection actually receiving data." LIVENESS_STALE_MS (used by healthcheck.ts) is
+// deliberately larger than HEARTBEAT_STALE_MS, to let the internal reconnect logic get
+// a chance to self-heal before Docker intervenes.
+const LIVENESS_FILE = process.env.LIVENESS_FILE ?? "/tmp/ingester-liveness";
+
+function touchLiveness(): void {
+  try {
+    writeFileSync(LIVENESS_FILE, String(Date.now()));
+  } catch (err) {
+    log("warn", "failed to write liveness file", { error: String(err) });
+  }
+}
 
 function log(level: "info" | "warn" | "error", msg: string, fields: Record<string, unknown> = {}): void {
   const line = JSON.stringify({ level, msg, ts: new Date().toISOString(), ...fields });
@@ -150,6 +175,11 @@ async function main(): Promise<void> {
       log("error", "flush failed during fatal shutdown", { error: String(err) });
     }
     await producer.disconnect().catch(() => {});
+    // Same reasoning as the producer flush above: Sentry's own event delivery is async,
+    // so capturing right before process.exit without flushing would drop the event —
+    // this is a no-op when Sentry has no DSN configured.
+    Sentry.captureMessage(`ingester exiting fatally with code ${exitCode}`, "error");
+    await Sentry.flush(2000).catch(() => {});
     process.exit(exitCode);
   }
 
@@ -193,6 +223,7 @@ async function main(): Promise<void> {
 
       const now = Date.now();
       for (const symbol of config.symbols) lastHeartbeatAt.set(symbol, now);
+      touchLiveness();
 
       pingTimer = setInterval(() => {
         if (pongTimeoutTimer) return; // already waiting on a previous ping
@@ -287,6 +318,7 @@ async function main(): Promise<void> {
         }
 
         lastHeartbeatAt.set(msg.product_id, Date.now());
+        touchLiveness();
         const symbol = msg.product_id;
 
         // Resolve any suspicion from the *previous* heartbeat first, against the trade_id

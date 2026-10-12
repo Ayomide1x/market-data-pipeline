@@ -1,0 +1,147 @@
+# Applied explicitly: docker compose -f compose.yaml -f compose.prod.yaml up — never
+# compose.override.yaml, which is dev-only host port publishing (see the "Compose file
+# structure" decision in DECISIONS.md for why the base file is structurally incapable of
+# publishing a port even if this file forgot to say so).
+#
+# Run locally first (this stage's own instruction): bring this up against the same
+# Kafka/Redis this machine already runs for dev, confirm `docker stats` stays under every
+# limit below and disk usage stays flat for several hours, before this ever goes near the
+# real Oracle VM. See DECISIONS.md for the restart-policy reasoning, the maxmemory sizing,
+# and what Stage 9 does and does not close (the arm64 latency re-measurement is Stage 10).
+
+services:
+  kafka:
+    deploy:
+      resources:
+        limits:
+          # Verified live that this is honored under plain `docker compose up` on this
+          # Compose version (v5.5.1), not swarm-only — see DECISIONS.md.
+          memory: 768M
+    environment:
+      # Dropped EXTERNAL entirely in prod: no prod client ever uses it (the ingester is
+      # containerized now, talking to kafka:9092 on the compose network like everything
+      # else) — per CLAUDE.md's "advertised.listeners: internal network only in prod".
+      # Individual keys merge over the base file's environment mapping; this doesn't
+      # need to repeat the rest. See DECISIONS.md.
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  kafka-init:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    # command: REPLACES the base file's command wholesale (Compose doesn't merge array
+    # values across files) — --appendonly yes has to be restated here, not inherited.
+    # maxmemory 256mb is generous relative to this project's actual footprint: a
+    # handful of state:{symbol} hashes and, even at the global alert cap, a few hundred
+    # small alert:{id} hashes — low hundreds of KB in practice. noeviction means a full
+    # Redis errors loudly on writes instead of silently discarding state (CLAUDE.md).
+    # See DECISIONS.md for the estimate behind this number.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ingester:
+    build:
+      context: ./ingester
+      dockerfile: Dockerfile
+    environment:
+      SYMBOLS: ${SYMBOLS:?SYMBOLS must be set}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    # Bounded, not `always`/unbounded `on-failure`: EX_CONFIG (78) is a deterministic,
+    # non-retryable condition (a bad/delisted symbol) — restarting can't fix it, and an
+    # unbounded policy crash-loops on it forever. Compose can't distinguish exit codes,
+    # so this bounds the blast radius instead: after 5 failed attempts it stops and sits
+    # down, visibly, rather than looping. The counter resets on a Docker daemon restart
+    # (e.g. a VM reboot) — a permanently misconfigured service starts looping again from
+    # zero in that case; accepted, not fixed. See DECISIONS.md.
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # Well under the container limit below (CLAUDE.md's own "Always-on" note).
+      JAVA_TOOL_OPTIONS: "-Xmx384m -Xms384m"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # Same reasoning as the ingester, for the same underlying class of problem: a
+    # PartitionMismatchException is also a deterministic, non-retryable fatal condition
+    # (Redis state references an incompatible partition — needs manual intervention,
+    # not a restart). See DECISIONS.md.
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    environment:
+      REDIS_HOST: redis
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      JAVA_TOOL_OPTIONS: "-Xmx384m -Xms384m"
+      # Required, not defaulted to dev's localhost:5173 — the real value is the Vercel
+      # URL, supplied at Stage 10 deploy time. See DECISIONS.md.
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set to the real frontend origin}
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # No known deterministic-fatal path here (unlike ingester/consumer) — api's
+    # failures are more plausibly transient (a Redis blip). Still bounded, just more
+    # leniently, rather than left fully unbounded.
+    restart: on-failure:10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
