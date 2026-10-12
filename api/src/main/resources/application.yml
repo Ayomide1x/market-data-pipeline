@@ -26,8 +26,9 @@ spring:
       timeout: 2000ms
 
 app:
-  # Same SYMBOLS format/variable as the ingester and consumer (see DECISIONS.md for the
-  # drift risk this creates — three services, three independent reads of one env var).
+  # Same SYMBOLS format/variable as the ingester (see DECISIONS.md for the drift risk
+  # this creates — two services, two independent reads of one env var; the consumer
+  # reads no symbols list at all, it's driven by whatever key/partition data arrives).
   symbols: ${SYMBOLS:BTC-USD}
   alert:
     ttl-seconds: ${ALERT_TTL_SECONDS:3600}

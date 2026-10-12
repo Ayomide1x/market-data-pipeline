@@ -65,6 +65,11 @@ public class AppConfig implements WebMvcConfigurer {
 
   // Standing for the api's whole lifetime, regardless of connected-client count — see
   // SseRegistry and DECISIONS.md.
+  //
+  // setAutoStartup(false): a slow-to-become-reachable Redis must never fail the whole
+  // Spring context — see DECISIONS.md for the real incident (233s JVM startup on the
+  // deploy target racing Redis's own readiness, fatal on this bean's default eager
+  // start). RedisSubscriptionStarter retries the actual start() on a schedule instead.
   @Bean
   public RedisMessageListenerContainer redisMessageListenerContainer(
       RedisConnectionFactory connectionFactory, SseRegistry sseRegistry) {
@@ -72,6 +77,7 @@ public class AppConfig implements WebMvcConfigurer {
     container.setConnectionFactory(connectionFactory);
     container.addMessageListener(sseRegistry, new ChannelTopic("ticks:updates"));
     container.addMessageListener(sseRegistry, new ChannelTopic("alerts:fired"));
+    container.setAutoStartup(false);
     return container;
   }
 }
