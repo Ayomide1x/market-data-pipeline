@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from './config';
+import { decimalPlaces } from './decimals';
 import { isAlertFired, isSymbolSnapshot, isTickUpdate, parseSseData } from './sseGuards';
 import type { AlertFired, ConnectionStatus, SymbolRow } from './types';
 
@@ -54,16 +55,21 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
     es.addEventListener('snapshot', (e: MessageEvent<string>) => {
       const snap = parseSseData(e.data, isSymbolSnapshot, 'snapshot');
       if (!snap) return;
-      setRows((prev) => ({
-        ...prev,
-        [snap.symbol]: {
-          symbol: snap.symbol,
-          hasData: snap.hasData,
-          price: snap.price,
-          ema: snap.ema,
-          exchangeTs: snap.exchangeTs,
-        },
-      }));
+      setRows((prev) => {
+        const priorDecimals = prev[snap.symbol]?.decimals ?? 0;
+        const decimals = snap.price === null ? priorDecimals : Math.max(priorDecimals, decimalPlaces(snap.price));
+        return {
+          ...prev,
+          [snap.symbol]: {
+            symbol: snap.symbol,
+            hasData: snap.hasData,
+            price: snap.price,
+            ema: snap.ema,
+            exchangeTs: snap.exchangeTs,
+            decimals,
+          },
+        };
+      });
     });
 
     es.addEventListener('tick', (e: MessageEvent<string>) => {
@@ -73,9 +79,13 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
         // Stage 7's rule, enforced here: a tick for a symbol this connection's snapshot
         // never listed is ignored, not turned into a new row. See DECISIONS.md.
         if (!(tick.symbol in prev)) return prev;
+        // Decimal width only ever grows, never shrinks, for a given symbol — derived
+        // from the data actually observed, not a hardcoded per-symbol value. See
+        // decimals.ts and DECISIONS.md.
+        const decimals = Math.max(prev[tick.symbol].decimals, decimalPlaces(tick.price));
         return {
           ...prev,
-          [tick.symbol]: { symbol: tick.symbol, hasData: true, price: tick.price, ema: tick.ema, exchangeTs: tick.exchangeTs },
+          [tick.symbol]: { symbol: tick.symbol, hasData: true, price: tick.price, ema: tick.ema, exchangeTs: tick.exchangeTs, decimals },
         };
       });
     });

@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { computeAgeMs, formatAge } from '../age';
+import { formatPrice } from '../decimals';
 import type { SymbolRow } from '../types';
 
 type FlashClass = '' | 'flash-up' | 'flash-down';
@@ -32,11 +33,15 @@ const SymbolTableRow = memo(function SymbolTableRow({ row, now }: { row: SymbolR
     );
   }
 
+  // Same decimals for EMA as price — EMA is a derived float with no "natural" string
+  // precision of its own, so matching it to whatever this symbol's actual trades have
+  // shown keeps the two columns visually consistent instead of EMA staying fixed at 2
+  // while price's observed width grows or shrinks. See DECISIONS.md.
   return (
     <tr>
       <td>{row.symbol}</td>
-      <td className={flash}>{row.price}</td>
-      <td>{row.ema?.toFixed(2) ?? '—'}</td>
+      <td className={flash}>{row.price !== null ? formatPrice(row.price, row.decimals) : '—'}</td>
+      <td>{row.ema !== null ? row.ema.toFixed(row.decimals) : '—'}</td>
       <td className="symbol-table__age">{formatAge(computeAgeMs(row.exchangeTs, now))}</td>
     </tr>
   );

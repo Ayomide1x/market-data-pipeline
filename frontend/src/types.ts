@@ -60,10 +60,15 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'fa
 
 // In-memory row state, deliberately without ageMs — age is always derived live from
 // exchangeTs + a ticking clock (see age.ts), never stored as a fetched/pushed value.
+// decimals is the most decimal places this symbol has shown in any price seen so far —
+// derived from the data, not hardcoded per symbol — so the displayed column stays at a
+// stable width instead of jittering as trailing zeros come and go. See decimals.ts and
+// DECISIONS.md.
 export interface SymbolRow {
   symbol: string;
   hasData: boolean;
   price: string | null;
   ema: number | null;
   exchangeTs: number | null;
+  decimals: number;
 }
