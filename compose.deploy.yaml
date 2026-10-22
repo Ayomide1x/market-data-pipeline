@@ -5,7 +5,12 @@
 # `make prod-up`/`make prod-local-up` run.) Pulls pre-built images (see the `image:`
 # tags added to compose.prod.yaml and scripts/build-and-push.sh) rather than building —
 # the VM never needs the source tree, only these compose files plus a .env with the
-# real SYMBOLS/CORS_ORIGIN/SENTRY_DSN/DOMAIN values.
+# real SYMBOLS/CORS_ORIGIN/SENTRY_DSN values.
+#
+# Caddy (TLS, reverse proxy) is NOT part of this file — it moved out into its own,
+# separate Compose project on the VM once a second app needed to share the same box and
+# the same two ports. DOMAIN, the Caddyfile, and the caddy service itself all live there
+# now, not here. See DECISIONS.md.
 
 services:
   # Neither kafka nor redis has ever had a restart: policy set — Compose's own default
@@ -98,34 +103,13 @@ services:
       resources:
         limits:
           memory: 1024M
-
-  # New here — Stage 9 never needed Caddy locally (no real domain/TLS to test against).
-  # Automatic TLS is Caddy's own default behavior, not something turned on explicitly;
-  # flush_interval -1 IS explicit, deliberately, rather than relying on an unstated
-  # default for the one thing that would silently break Stage 7's whole point if wrong.
-  # See Caddyfile and DECISIONS.md.
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
+    # Caddy used to reach the api over this compose project's own internal network, so no
+    # host port was needed. Caddy has since moved out into its own, separate Compose
+    # project on the VM (shared across this app and a second one), so this is now the
+    # only way anything outside this project's network can reach the api at all.
+    # Loopback-only — same convention as compose.prod.local.yaml's dev-testing port, and
+    # the thing that keeps this compliant with invariant #10 (Kafka/Redis, and now this,
+    # never reachable from the public internet): only a process on the VM itself — the
+    # other Caddy project — can connect, nothing off-box can. See DECISIONS.md.
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    command: ["caddy", "run", "--config", "/etc/caddyfile"]
-    environment:
-      DOMAIN: ${DOMAIN:?DOMAIN must be set to the real .dev domain}
-    depends_on:
-      api:
-        condition: service_healthy
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-volumes:
-  caddy-data:
-  caddy-config:
+      - "127.0.0.1:8080:8080"
