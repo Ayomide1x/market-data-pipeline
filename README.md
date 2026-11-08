@@ -17,7 +17,7 @@ flowchart TD
     API -->|REST + SSE| FE[frontend<br/>React]
 ```
 
-Single Kafka broker (KRaft, no ZooKeeper), one partition per symbol for strict ordering. The API never touches Kafka and never holds authoritative state — Redis is the single source of truth for everything it serves.
+Single Kafka broker (KRaft, no ZooKeeper), `ticks` has 6 partitions keyed by symbol, so each symbol always lands on the same partition and keeps strict per-symbol ordering. The API never touches Kafka and never holds authoritative state — Redis is the single source of truth for everything it serves.
 
 ## Tech stack
 
