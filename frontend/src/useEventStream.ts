@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from './config';
 import { decimalPlaces } from './decimals';
+import { pushRateSample } from './tradeRate';
 import { isAlertFired, isSymbolSnapshot, isTickUpdate, parseSseData } from './sseGuards';
 import { pushHistory } from './sparkline';
 import type { AlertFired, ConnectionStatus, SymbolRow } from './types';
@@ -65,6 +66,10 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
         // ticks in between. Appending onto old history would draw a line across a gap
         // that isn't really continuous data. See DECISIONS.md.
         const history = snap.price === null ? [] : [Number(snap.price)];
+        const rateSamples =
+          snap.exchangeTs != null && snap.exchangeSeq != null
+            ? [{ exchangeTs: snap.exchangeTs, exchangeSeq: snap.exchangeSeq }]
+            : [];
         return {
           ...prev,
           [snap.symbol]: {
@@ -75,6 +80,7 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
             exchangeTs: snap.exchangeTs,
             decimals,
             history,
+            rateSamples,
           },
         };
       });
@@ -92,6 +98,13 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
         // decimals.ts and DECISIONS.md.
         const decimals = Math.max(prev[tick.symbol].decimals, decimalPlaces(tick.price));
         const history = pushHistory(prev[tick.symbol].history, Number(tick.price));
+        const rateSamples =
+          tick.exchangeSeq != null
+            ? pushRateSample(prev[tick.symbol].rateSamples, {
+                exchangeTs: tick.exchangeTs,
+                exchangeSeq: tick.exchangeSeq,
+              })
+            : prev[tick.symbol].rateSamples;
         return {
           ...prev,
           [tick.symbol]: {
@@ -102,6 +115,7 @@ export function useEventStream(onAlertFired: (fired: AlertFired) => void): UseEv
             exchangeTs: tick.exchangeTs,
             decimals,
             history,
+            rateSamples,
           },
         };
       });

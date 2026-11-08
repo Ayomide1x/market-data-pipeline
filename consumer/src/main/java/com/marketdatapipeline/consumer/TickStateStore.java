@@ -38,22 +38,27 @@ public class TickStateStore {
    * detection also depends on). {@code alertIdsToFire} (bare alert ids the caller
    * already determined crossed this tick, possibly empty) are marked fired — and, since
    * Stage 7, PUBLISHed on alerts:fired — in the same atomic write, but only if this tick
-   * is actually applied; see apply_tick.lua for exactly why and how.
+   * is actually applied; see apply_tick.lua for exactly why and how. {@code exchangeSeq}
+   * is written into the same hash and the ticks:updates payload for the frontend's
+   * trades/min column. It's deliberately not part of {@link SymbolState}: nothing in the
+   * consumer reads it back, so caching it would add state with no reader.
    */
-  public ApplyResult applyTick(String symbol, SymbolState candidate, List<String> alertIdsToFire) {
+  public ApplyResult applyTick(
+      String symbol, SymbolState candidate, long exchangeSeq, List<String> alertIdsToFire) {
     List<String> keys = new ArrayList<>(1 + alertIdsToFire.size());
     keys.add(stateKey(symbol));
     for (String id : alertIdsToFire) {
       keys.add(AlertStore.alertKey(id));
     }
 
-    List<Object> argv = new ArrayList<>(6 + alertIdsToFire.size());
+    List<Object> argv = new ArrayList<>(7 + alertIdsToFire.size());
     argv.add(candidate.price());
     argv.add(Double.toString(candidate.ema()));
     argv.add(Long.toString(candidate.exchangeTs()));
     argv.add(Long.toString(candidate.lastOffset()));
     argv.add(Integer.toString(candidate.partition()));
     argv.add(symbol);
+    argv.add(Long.toString(exchangeSeq));
     argv.addAll(alertIdsToFire);
 
     List<String> result = redisTemplate.execute(applyTickScript, keys, argv.toArray());

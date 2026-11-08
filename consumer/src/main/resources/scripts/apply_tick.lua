@@ -2,7 +2,7 @@
 -- partition (checked first — offsets from different partitions are not comparable at
 -- all, invariant #1), then, if it matches, comparing the incoming Kafka offset against
 -- this symbol's stored lastOffset and, if greater, writing price/ema/exchangeTs/
--- lastOffset/partition in one operation (invariant #2), marking any alerts the caller
+-- exchangeSeq/lastOffset/partition in one operation (invariant #2), marking any alerts the caller
 -- determined crossed as fired in that same write (invariant #5), and PUBLISHing a tick
 -- update plus one alert-fired notification per alert actually marked — all inside the
 -- same atomic execution, only when applied. PUBLISH from EVAL verified live against this
@@ -26,7 +26,12 @@
 -- ARGV[6] = symbol, bare (for the ticks:updates/alerts:fired payloads — an explicit
 --   value, not parsed back out of KEYS[1], so a future key-naming change can't silently
 --   desync the publish payload from the key it was derived from).
--- ARGV[7..] = bare alert ids, one per extra KEYS entry, in the same order as KEYS[2..] —
+-- ARGV[7] = exchangeSeq, the exchange's per-product trade id (Coinbase trade_id). Stored
+--   and published for display only: the frontend computes trades/min from the
+--   difference between two updates' exchangeSeq values, which stays correct even when
+--   the api merges several ticks into one SSE update. Nothing in the consumer reads it
+--   back, so it isn't part of the returned state below. See DECISIONS.md.
+-- ARGV[8..] = bare alert ids, one per extra KEYS entry, in the same order as KEYS[2..] —
 --   lets the alerts:fired payload include "id" without parsing it out of a key name.
 -- Returns: {status, price, ema, exchangeTs, lastOffset, partition} — unchanged shape;
 -- the caller already knows which ids it submitted, so "applied" alone tells it they fired.
@@ -39,6 +44,7 @@ local newEma = ARGV[2]
 local newExchangeTs = ARGV[3]
 local newOffset = tonumber(ARGV[4])
 local newPartition = ARGV[5]
+local newExchangeSeq = ARGV[7]
 
 local storedPartition = redis.call('HGET', key, 'partition')
 
@@ -61,10 +67,11 @@ end
 
 redis.call('HSET', key,
   'price', newPrice, 'ema', newEma, 'exchangeTs', newExchangeTs,
-  'lastOffset', ARGV[4], 'partition', newPartition)
+  'exchangeSeq', newExchangeSeq, 'lastOffset', ARGV[4], 'partition', newPartition)
 
 redis.call('PUBLISH', 'ticks:updates', cjson.encode({
-  symbol = ARGV[6], price = newPrice, ema = tonumber(newEma), exchangeTs = tonumber(newExchangeTs)
+  symbol = ARGV[6], price = newPrice, ema = tonumber(newEma), exchangeTs = tonumber(newExchangeTs),
+  exchangeSeq = tonumber(newExchangeSeq)
 }))
 
 for i = 2, #KEYS do
@@ -77,7 +84,7 @@ for i = 2, #KEYS do
     local fields = redis.call('HMGET', KEYS[i], 'direction', 'threshold')
     redis.call('HSET', KEYS[i], 'status', 'fired', 'firedAtOffset', ARGV[4])
     redis.call('PUBLISH', 'alerts:fired', cjson.encode({
-      id = ARGV[5 + i], symbol = ARGV[6], direction = fields[1], threshold = fields[2],
+      id = ARGV[6 + i], symbol = ARGV[6], direction = fields[1], threshold = fields[2],
       firedAtOffset = tonumber(ARGV[4])
     }))
   end

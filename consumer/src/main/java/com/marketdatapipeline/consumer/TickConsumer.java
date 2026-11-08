@@ -85,7 +85,7 @@ public class TickConsumer {
       }
     }
 
-    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate, crossedAlertIds);
+    TickStateStore.ApplyResult result = stateStore.applyTick(symbol, candidate, tick.exchangeSeq(), crossedAlertIds);
 
     // "applied" means every id in crossedAlertIds just got marked fired by the same
     // write — the script never touches them on skipped/partition_mismatch (invariant

@@ -10,6 +10,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+// exchangeSeq is optional on both events: a consumer or state hash from before the field
+// existed sends none, and the row just shows no trade rate rather than being dropped.
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'number';
+}
+
 export function isSymbolSnapshot(value: unknown): value is SymbolSnapshot {
   if (!isRecord(value)) return false;
   return (
@@ -18,7 +24,8 @@ export function isSymbolSnapshot(value: unknown): value is SymbolSnapshot {
     (value.price === null || typeof value.price === 'string') &&
     (value.ema === null || typeof value.ema === 'number') &&
     (value.exchangeTs === null || typeof value.exchangeTs === 'number') &&
-    (value.ageMs === null || typeof value.ageMs === 'number')
+    (value.ageMs === null || typeof value.ageMs === 'number') &&
+    isOptionalNumber(value.exchangeSeq)
   );
 }
 
@@ -28,7 +35,8 @@ export function isTickUpdate(value: unknown): value is TickUpdate {
     typeof value.symbol === 'string' &&
     typeof value.price === 'string' &&
     typeof value.ema === 'number' &&
-    typeof value.exchangeTs === 'number'
+    typeof value.exchangeTs === 'number' &&
+    isOptionalNumber(value.exchangeSeq)
   );
 }
 

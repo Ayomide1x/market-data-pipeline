@@ -1,3 +1,5 @@
+import type { RateSample } from './tradeRate';
+
 // Shapes mirrored from the api's own records (SymbolSnapshot, TickUpdate, AlertFired,
 // AlertView) — see DECISIONS.md for why the table's rows and the alert form's symbol
 // choices deliberately come from different sources despite both being "symbols."
@@ -9,6 +11,8 @@ export interface SymbolSnapshot {
   ema: number | null;
   exchangeTs: number | null;
   ageMs: number | null;
+  // Optional: null/absent from a state hash written before the consumer stored it.
+  exchangeSeq?: number | null;
 }
 
 export interface TickUpdate {
@@ -16,6 +20,8 @@ export interface TickUpdate {
   price: string;
   ema: number;
   exchangeTs: number;
+  // Optional: null/absent from a consumer that predates the field. See tradeRate.ts.
+  exchangeSeq?: number | null;
 }
 
 export interface AlertFired {
@@ -69,6 +75,8 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'fa
 // DECISIONS.md), reset to a single point on every snapshot (connect or reconnect): the
 // snapshot only ever gives one current price, never history, so the window necessarily
 // starts over rather than being synthesized from anything else (EMA included).
+// rateSamples is the same kind of window for trades/min (see tradeRate.ts), reset on
+// every snapshot for the same reason: a drop may have missed updates in between.
 export interface SymbolRow {
   symbol: string;
   hasData: boolean;
@@ -77,4 +85,5 @@ export interface SymbolRow {
   exchangeTs: number | null;
   decimals: number;
   history: number[];
+  rateSamples: RateSample[];
 }

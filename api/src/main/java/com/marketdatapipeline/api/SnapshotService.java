@@ -21,7 +21,7 @@ public class SnapshotService {
   public SymbolSnapshot snapshotFor(String symbol) {
     Map<String, String> hash = redisTemplate.<String, String>opsForHash().entries("state:" + symbol);
     if (hash.isEmpty()) {
-      return new SymbolSnapshot(symbol, false, null, null, null, null);
+      return new SymbolSnapshot(symbol, false, null, null, null, null, null);
     }
 
     long exchangeTs = Long.parseLong(hash.get("exchangeTs"));
@@ -30,7 +30,14 @@ public class SnapshotService {
     // is the right tool, not the wrong one. See DECISIONS.md.
     long ageMs = System.currentTimeMillis() - exchangeTs;
 
+    String exchangeSeq = hash.get("exchangeSeq");
     return new SymbolSnapshot(
-        symbol, true, hash.get("price"), Double.parseDouble(hash.get("ema")), exchangeTs, ageMs);
+        symbol,
+        true,
+        hash.get("price"),
+        Double.parseDouble(hash.get("ema")),
+        exchangeTs,
+        ageMs,
+        exchangeSeq == null ? null : Long.parseLong(exchangeSeq));
   }
 }
